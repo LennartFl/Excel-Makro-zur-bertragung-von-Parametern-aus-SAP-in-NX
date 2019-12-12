@@ -1,0 +1,232 @@
+Sub copy_exp()
+    On Error GoTo error_while_setting_variables
+    Dim dest As String
+    Dim sap_name As String
+    Dim exp_name As String
+    
+    Dim value As Variant
+    
+    Dim sap_output_length As Integer
+    Dim geometry_sheet_length As Integer
+    Dim options_sheet_length As Integer
+    Dim equality_sheet_length As Integer
+    Dim coordinate As Integer
+    Dim number_of_options As Integer
+    Dim selected_option As Integer
+    Dim iterator As Integer
+    Dim auftragsnr As Long
+    Dim posnr As Long
+    
+    Dim find_cell As Range
+    Dim source_workbook As Workbook
+    Dim lookup_workbook As Workbook
+    Dim source_sheet As Worksheet
+    Dim geometry_sheet As Worksheet
+    Dim options_sheet As Worksheet
+    Dim equality_sheet As Worksheet
+    Dim WsF As WorksheetFunction
+    
+    Set source_workbook = ActiveWorkbook                                      'Das Workbook, auf dem das Makro ausgeführt wird
+    Set source_sheet = ActiveSheet                                            'In diesem Workbook das Sheet, auf dem das Makro ausgeführt wird
+    Set lookup_workbook = Workbooks("lookup_table.xlsm")                      'Das Workbook mit dem Mapping. Muss diesem Namen entsprechen!
+    Set geometry_sheet = lookup_workbook.Worksheets("Geometrische Parameter") 'Das Worksheet mit den geometrischen Parametern. Muss diesem Namen entsprechen!
+    Set options_sheet = lookup_workbook.Worksheets("Optionsparameter")        'Das Worksheet mit den Optionsparametern. Muss diesem Namen entsprechen!
+    Set WsF = Application.WorksheetFunction
+    
+    sap_output_length = source_sheet.Cells(Rows.Count, 1).End(xlUp).Row       'Anzahl der Zeilen der SAP-Exportdatei
+    geometry_sheet_length = geometry_sheet.Cells(Rows.Count, 1).End(xlUp).Row 'Anzahl der Zeilen im Mapping mit den geometrischen Parametern
+    options_sheet_length = options_sheet.Cells(Rows.Count, 2).End(xlUp).Row   'Anzahl der Zeilen im Mapping mit den Optionsparametern
+    equality_sheet_length = equality_sheet.Cells(Rows.Count, 1).End(xlUp).Row 'Anzahl der Zeilen im Mapping mit den äquivalenten Parametern
+    
+    On Error GoTo error_auftragsnr_posnr
+    auftragsnr = WsF.VLookup("TBME_0000_AUFTRAGSNUMMER", source_sheet.Range("A1:C" & sap_output_length), 3, False)  'Auslesen der Auftragsnummer
+    posnr = WsF.VLookup("TBME_0000_POSITIONSNUMMER", source_sheet.Range("A1:C" & sap_output_length), 3, False)      'Auslesen der Positionsnummer
+    dest = ActiveWorkbook.Path & "\" & auftragsnr & "_" & posnr & "_" & Date & ".exp"   'Späterer Dateiname, bestehend aus Auftragsnr, Posnr und Datum
+    On Error GoTo error_not_specified
+    Open dest For Output As #1      'Die exp-Datei wird erstellt. Sollte sie bereits vorhanden sein, wird sie vollständig geleert.
+    Close #1
+    
+'Im Folgenden wird für jede Zeile des SAP-Exports wird überprüft, ob es sich um einen im Mapping behandelten Parameter handelt
+    For I = 1 To sap_output_length
+        On Error GoTo error_not_specified
+        sap_name = source_sheet.Cells(I, 1).value
+        value = source_sheet.Cells(I, 3).value
+        
+'Aktueller SAP-Parametername wird im Mapping der geometrischen Parameter gesucht
+        Set find_cell = Nothing
+        Set find_cell = geometry_sheet.Cells.Find(what:=sap_name, LookIn:=xlValues)
+'Sollte er gefunden worden sein, wird der entsprechende NX-Name mit dem dazugehörigen Wert in die exp-Datei geschrieben. Danach wird der nächste Eintrag genommen.
+        If Not find_cell Is Nothing Then
+            exp_name = WsF.VLookup(sap_name, geometry_sheet.Range("A1:B" & geometry_sheet_length), 2, False)
+            Call print_in_exp(exp_name, value, dest)
+            GoTo resume_with_next_i
+'Sollte er nicht gefunden werden, wird im Mapping der Optionsparameter weitergesucht
+        Else
+            coordinate = 0
+            On Error Resume Next
+            coordinate = WsF.Match(sap_name, options_sheet.Columns(1), False)
+'Sollte der Parameter auch im Optionsparameter-Mapping nicht gefunden werden, wird der Parameter ignoriert
+            On Error GoTo error_not_specified
+            If coordinate = 0 Then
+                GoTo resume_with_next_i
+'Wenn er gefunden wurde, wird der NX-Parameter, der dem aus SAP ausgegebenen Wert zugeordnet wurde, aus dem Mapping herausgesucht. Dieser wird auf 1 gesetzt
+            Else
+                On Error GoTo error_sap_unknown_value   'Spezieller Error, der anzeigt, wenn ein aus SAP ausgegebener Wert nicht im Mapping übersetzt wird
+                exp_name = WsF.HLookup(value, options_sheet.Range("B" & coordinate & ":Z" & (coordinate + 1)), 2, False)
+                On Error GoTo error_not_specified
+                Call print_in_exp(exp_name, "1", dest)
+                
+'Alle anderen NX-Parameter, die dem selben SAP-Parameter zugeordnet worden sind, werden auf 0 gesetzt
+                number_of_options = (options_sheet.Cells(coordinate, Columns.Count).End(xlToLeft).Column - 1)
+                selected_option = (WsF.Match(value, options_sheet.Rows(coordinate), False) - 1)
+'Zuerst werden alle NX-Parameter, die links vom ausgewählten NX-Parameter stehen, auf 0 gesetzt
+                iterator = 1
+                While (selected_option - iterator) >= 0
+                    exp_name = options_sheet.Cells((coordinate + 1), (selected_option - iterator + 1)).value
+                    If exp_name <> "" Then
+                        Call print_in_exp(exp_name, "0", dest)
+                    End If
+                    iterator = iterator + 1
+                Wend
+'Danach werden alle NX-Parameter, die rechts vom ausgewählten NX-Parameter stehen, auf 0 gesetzt
+                iterator = 1
+                While (selected_option + iterator) <= number_of_options     'Alle Parameter. die im Mapping rechts vom ausgewählten Wert liegen, werden auf 0 gesetzt
+                    exp_name = options_sheet.Cells((coordinate + 1), (selected_option + iterator + 1)).value
+                    If exp_name <> "" Then
+                        Call print_in_exp(exp_name, "0", dest)
+                    End If
+                    iterator = iterator + 1
+                Wend
+'Danach wird mit der nächsten Zeile des SAP-Exports fortgefahren
+                GoTo resume_with_next_i
+            End If
+        End If
+        
+resume_with_next_i:
+    Next I
+    
+'Alle nicht behandelten Werte werden auf den im Mapping eingetragen Default-Wert gesetzt
+    On Error GoTo error_while_setting_on_defaults
+    Call set_on_defaults(source_sheet, geometry_sheet, options_sheet, sap_output_length, geometry_sheet_length, options_sheet_length, dest)
+    
+'Alle im Worksheet "Ausnahmen" eingetragenen Parameter gleichsetzen
+    On Error GoTo error_while_processing_equalities
+    Call process_equalities(equality_sheet, equality_sheet_length, dest)
+
+
+
+error_while_setting_variables:
+    MsgBox "Fehler während des Setzens der Variablen. Bitte überprüfen Sie, ob der Dateiname und die Arbeitsblattnamen der Makrodatei (lookup_table.xlsm) nicht geändert worden sind.", , "Fehler" 'Kein leeren der .exp-Datei notwendig, da sie noch nicht generiert wurde
+    Exit Sub
+error_auftragsnr_posnr:
+    MsgBox "Die Auftrags- oder Positionsnummer wurde nicht im SAP-Export gefunden.", , "Fehler" 'Kein leeren der .exp-Datei notwendig, da sie ggf. noch nicht generiert wurde
+    Exit Sub
+error_sap_unknown_value:
+    Open dest For Output As #1 '.exp-Datei wird bei Error geleert, damit keine unvollständigen Daten hochgeladen werden
+    Close #1
+    MsgBox "Aus SAP exportierter Wert " & value & " für Optionsparameter " & sap_name & " wurde nicht in lookup_table.xlsx gefunden. Bitte überprüfen Sie, ob alle möglichen Werte in lookup_table.xlsx behandelt werden, und ergänzen Sie diesen Wert.", , "Fehler"
+    Exit Sub
+error_while_setting_on_defaults:
+    Open dest For Output As #1 '.exp-Datei wird bei Error geleert, damit keine unvollständigen Daten hochgeladen werden
+    Close #1
+    MsgBox "Es ist ein Fehler aufgetreten, während alle nicht im SAP-Export versorgten Variablen auf den in lookup_table.xlsx eingetragenen Standardwert gesetzt werden sollten. Bitte überprüfen Sie, ob für alle nicht im SAP-Export enthaltene Variablen auch ein Standardwert eingetragen ist.", , "Fehler"
+    Exit Sub
+error_while_processing_equalities:
+    Open dest For Output As #1 '.exp-Datei wird bei Error geleert, damit keine unvollständigen Daten hochgeladen werden
+    Close #1
+    MsgBox "Es ist ein Fehler aufgetreten, während die Parametergleichheiten im Tabellenblatt Ausnahmen bearbeitet worden sind. Bitte überprüfen Sie, ob die Gleichheiten dort richtig gepflegt sind.", , "Fehler"
+    Exit Sub
+error_not_specified:
+    Open dest For Output As #1 '.exp-Datei wird bei Error geleert, damit keine unvollständigen Daten hochgeladen werden
+    Close #1
+    MsgBox "Es ist ein Fehler aufgetreten. Bitte überprüfen Sie, ob der Excel-Export aus SAP vor der Ausführung dieses Makros verändert wurde.", , "Fehler"
+    Exit Sub
+End Sub
+
+Private Sub set_on_defaults(ByVal source_sheet As Worksheet, ByVal geometry_sheet As Worksheet, ByVal options_sheet As Worksheet, ByVal sap_output_length As Integer, ByVal geometry_sheet_length As Integer, ByVal options_sheet_length As Integer, ByVal dest As String)
+'Diese Prozedur setzt um, dass alle nicht behandelten Parameter mit den im Mapping eingetragenen Default-Werten in die exp-Datei geschrieben werden
+    Dim WsF As WorksheetFunction
+    Dim find_cell As Range
+    Dim number_of_options As Integer
+    Dim search_word As String
+    
+    For I = 1 To geometry_sheet_length
+        search_word = geometry_sheet.Cells(I, 1)
+        Set find_cell = Nothing
+        Set find_cell = source_sheet.Cells.Find(what:=search_word, LookIn:=xlValues)
+        If find_cell Is Nothing And InStr(geometry_sheet.Cells(I, 3), "Default") = 0 Then 'Das Wort "Default" soll nicht enthalten sein, da es sich sonst um die Spaltenüberschrift handelt.
+            If geometry_sheet.Cells(I, 3).value = "" Then
+                Err.Raise (1)
+            Else
+                Call print_in_exp(geometry_sheet.Cells(I, 2).value, geometry_sheet.Cells(I, 3).value, dest)
+            End If
+        End If
+    Next I
+    
+    For I = 1 To options_sheet_length Step 2
+        search_word = options_sheet.Cells(I, 1)
+        Set find_cell = source_sheet.Cells.Find(what:=search_word, LookIn:=xlValues)
+        If find_cell Is Nothing Then
+            If options_sheet.Cells((I + 1), 1) = "" Then
+                Err.Raise (1)
+            Else
+                Call print_in_exp(options_sheet.Cells((I + 1), 1), "1", dest)
+                number_of_options = options_sheet.Cells((I + 1), Columns.Count).End(xlToLeft).Column
+                For J = 2 To number_of_options
+                    Call print_in_exp(options_sheet.Cells((I + 1), J), "0", dest)
+                Next J
+            End If
+        End If
+    Next I
+End Sub
+
+Private Sub process_equalities(ByVal lookup_workbook As Worksheet, ByVal equality_sheet_length As Integer, ByVal dest As String)
+'Diese Prozedur setzt um, dass alle Optionsparameter, die laut dem Worksheet "Ausnahmen" äquivalent sein sollen, jeweils auf den gleichen Wert gesetzt werden
+    Dim exp_name_1, exp_name_2, value, copy_of_dest, txt_line As String
+    
+    copy_of_dest = ActiveWorkbook.Path & "\tmp_copy_of_exp_file.exp"
+    FileCopy dest, copy_of_dest
+    
+    
+    For I = 1 To equality_sheet_length
+        exp_name_1 = equality_sheet.Cells(I, 1).value
+        exp_name_2 = equality_sheet.Cells(I, 2).value
+        Open copy_of_dest For Input As #2
+        Do While Not EOF(2)
+            Line Input #2, txt_line
+            If InStr(1, txt_line, exp_name_1) > 0 Then
+                value = Right(txt_line, Len(txt_line) - (Len(exp_name_1) + 1))
+                Call print_in_exp(exp_name_2, value, dest)
+            End If
+        Loop
+        Close #2
+    Next I
+    Kill copy_of_dest
+End Sub
+
+Private Sub print_in_exp(ByVal exp_name As String, ByVal value As String, ByVal dest As String)
+'Diese Prozedur schreibt den Übergebenen NX-Parameter mit dem übergebenen Wert in die exp-Datei
+    Dim pos_of_unit As Integer
+    Dim txt_line As String
+    Dim already_existing As Boolean
+    pos_of_unit = InStr(value, " mm")           'Test, ob die Einheit (mm) Teil des Werts ist
+    If pos_of_unit > 0 Then                     'Sollte die Einheit Teil des Werts sein, wird sie aus dem String gelöscht
+        value = Left(value, (pos_of_unit - 1))
+    End If
+    value = Replace(value, ",", ".")            'Ersetzt Dezimalkommas durch Dezimalpunkte
+    already_existing = False
+    
+    Open dest For Input As #1                   'Test, ob zu schreibender Parameter bereits in der exp-Datei enthalten ist
+    Do While Not EOF(1)
+        Line Input #1, txt_line
+        If InStr(1, txt_line, exp_name) > 0 Then
+            already_existing = True
+        End If
+    Loop
+    Close #1
+    Open dest For Append As #1
+    If already_existing = False Then            'Der Parameter wird nur gesetzt, wenn er bisher nicht in der exp-Datei enthalten ist
+        Print #1, exp_name + "=" + value        'Exakte Struktur, wie die Parameter in die exp-Datei geschrieben werden müssen, wird hier umgesetzt
+    End If
+    Close #1
+End Sub
