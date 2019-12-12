@@ -55,20 +55,24 @@ Sub copy_exp()
 'Aktueller SAP-Parametername wird im Mapping der geometrischen Parameter gesucht
         Set find_cell = Nothing
         Set find_cell = geometry_sheet.Cells.Find(what:=sap_name, LookIn:=xlValues)
+
 'Sollte er gefunden worden sein, wird der entsprechende NX-Name mit dem dazugehörigen Wert in die exp-Datei geschrieben. Danach wird der nächste Eintrag genommen.
         If Not find_cell Is Nothing Then
             exp_name = WsF.VLookup(sap_name, geometry_sheet.Range("A1:B" & geometry_sheet_length), 2, False)
             Call print_in_exp(exp_name, value, dest)
             GoTo resume_with_next_i
+
 'Sollte er nicht gefunden werden, wird im Mapping der Optionsparameter weitergesucht
         Else
             coordinate = 0
             On Error Resume Next
             coordinate = WsF.Match(sap_name, options_sheet.Columns(1), False)
+
 'Sollte der Parameter auch im Optionsparameter-Mapping nicht gefunden werden, wird der Parameter ignoriert
             On Error GoTo error_not_specified
             If coordinate = 0 Then
                 GoTo resume_with_next_i
+
 'Wenn er gefunden wurde, wird der NX-Parameter, der dem aus SAP ausgegebenen Wert zugeordnet wurde, aus dem Mapping herausgesucht. Dieser wird auf 1 gesetzt
             Else
                 On Error GoTo error_sap_unknown_value   'Spezieller Error, der anzeigt, wenn ein aus SAP ausgegebener Wert nicht im Mapping übersetzt wird
@@ -79,6 +83,7 @@ Sub copy_exp()
 'Alle anderen NX-Parameter, die dem selben SAP-Parameter zugeordnet worden sind, werden auf 0 gesetzt
                 number_of_options = (options_sheet.Cells(coordinate, Columns.Count).End(xlToLeft).Column - 1)
                 selected_option = (WsF.Match(value, options_sheet.Rows(coordinate), False) - 1)
+
 'Zuerst werden alle NX-Parameter, die links vom ausgewählten NX-Parameter stehen, auf 0 gesetzt
                 iterator = 1
                 While (selected_option - iterator) >= 0
@@ -88,6 +93,7 @@ Sub copy_exp()
                     End If
                     iterator = iterator + 1
                 Wend
+
 'Danach werden alle NX-Parameter, die rechts vom ausgewählten NX-Parameter stehen, auf 0 gesetzt
                 iterator = 1
                 While (selected_option + iterator) <= number_of_options     'Alle Parameter. die im Mapping rechts vom ausgewählten Wert liegen, werden auf 0 gesetzt
@@ -97,6 +103,7 @@ Sub copy_exp()
                     End If
                     iterator = iterator + 1
                 Wend
+
 'Danach wird mit der nächsten Zeile des SAP-Exports fortgefahren
                 GoTo resume_with_next_i
             End If
@@ -145,6 +152,7 @@ End Sub
 
 Private Sub set_on_defaults(ByVal source_sheet As Worksheet, ByVal geometry_sheet As Worksheet, ByVal options_sheet As Worksheet, ByVal sap_output_length As Integer, ByVal geometry_sheet_length As Integer, ByVal options_sheet_length As Integer, ByVal dest As String)
 'Diese Prozedur setzt um, dass alle nicht behandelten Parameter mit den im Mapping eingetragenen Default-Werten in die exp-Datei geschrieben werden
+
     Dim WsF As WorksheetFunction
     Dim find_cell As Range
     Dim number_of_options As Integer
@@ -182,6 +190,7 @@ End Sub
 
 Private Sub process_equalities(ByVal lookup_workbook As Worksheet, ByVal equality_sheet_length As Integer, ByVal dest As String)
 'Diese Prozedur setzt um, dass alle Optionsparameter, die laut dem Worksheet "Ausnahmen" äquivalent sein sollen, jeweils auf den gleichen Wert gesetzt werden
+
     Dim exp_name_1, exp_name_2, value, copy_of_dest, txt_line As String
     
     copy_of_dest = ActiveWorkbook.Path & "\tmp_copy_of_exp_file.exp"
@@ -206,6 +215,7 @@ End Sub
 
 Private Sub print_in_exp(ByVal exp_name As String, ByVal value As String, ByVal dest As String)
 'Diese Prozedur schreibt den Übergebenen NX-Parameter mit dem übergebenen Wert in die exp-Datei
+
     Dim pos_of_unit As Integer
     Dim txt_line As String
     Dim already_existing As Boolean
